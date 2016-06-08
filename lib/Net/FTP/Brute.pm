@@ -7,7 +7,7 @@ use Try::Tiny;
 use Scalar::Util qw(blessed);
 use Log::Log4perl qw(:easy);
 Log::Log4perl->easy_init($ENV{'Net_FTP_Brute_loglevel'} || $ERROR);
-print "$TRACE $DEBUG $FATAL";
+
 use Net::FTP;
 
 =head1 NAME
@@ -80,7 +80,6 @@ sub getWorkingConnection {
     try {
         TRACE "Trying _testConnection()";
         $ftp = $self->_testConnection( $netFtpOptions );
-croak "Cannot get a DATA channel open to '";
     } catch {
         croak $_ unless $_ =~ /Cannot get a DATA channel open/;
 
@@ -110,6 +109,8 @@ croak "Cannot get a DATA channel open to '";
         }
     };
 
+    DEBUG "Returning a working ftp-connection" if $ftp;
+    DEBUG "Returning no ftp-connection" unless $ftp;
     return $ftp;
 }
 
