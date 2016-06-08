@@ -68,13 +68,30 @@ sub new {
 
 Does it's darnest to get a working connection through a corporate firewall.
 
+@PARAM1 Integer, how many parallel threads as maximum to fork to "stimulate" the remote ftp-server/firewall.
+        Defaults to 1-5
+@PARAM2 Integer, how many times to try brute-forcing before giving up?
+        Defaults to 100
 @RETURNS Net::FTP-connection object
 
 =cut
 
 sub getWorkingConnection {
-    my ($self) = @_;
+    my ($self, $forks, $retries) = @_;
+    $forks = 5 unless $forks;
+    $retries = ($retries) ? $retries++ : 101;
     my $netFtpOptions = $self->_getNetFtpOptions();
+    return $self->_recurseBruteForce($forks, $retries, $netFtpOptions);
+}
+
+=head3 _recurseBruteForce
+
+=cut
+
+sub _recurseBruteForce {
+    my ($self, $forks, $retries, $netFtpOptions) = @_;
+    TRACE "PID$$: Recursing _recurseBruteForce($forks, $retries, $netFtpOptions)";
+    croak "No more brute-force retries" unless $retries; #Kill the recursion
 
     my $ftp;
     try {
@@ -84,7 +101,7 @@ sub getWorkingConnection {
         croak $_ unless $_ =~ /Cannot get a DATA channel open/;
 
         DEBUG "PID$$: DATA channel not open. Escalating to brute-force.";
-        my $children = $self->_spawnForks( $netFtpOptions );
+        my $children = $self->_spawnForks( $forks, $netFtpOptions );
         TRACE "PID$$: Children spawned";
 
         ##Wait for children to terminate and retry connecting to ftp
@@ -102,6 +119,7 @@ sub getWorkingConnection {
                 croak $_ unless $_ =~ /Cannot get a DATA channel open/;
             };
             last if $ftp;
+            $i++;
         }
         foreach my $pid (@$children) {
             kill('SIGTERM', $pid); #Terminate children after having made a successful connection
@@ -111,7 +129,7 @@ sub getWorkingConnection {
 
     DEBUG "PID$$: Returning a working ftp-connection" if $ftp;
     DEBUG "PID$$: Returning no ftp-connection" unless $ftp;
-    return $ftp;
+    return $ftp || $self->_recurseBruteForce($forks, --$retries, $netFtpOptions);
 }
 
 =head3 _spawnForks
@@ -123,9 +141,9 @@ Spawns parallel forks to try to connect to the ftp-server.
 =cut
 
 sub _spawnForks {
-    my ($self, $netFtpOptions) = @_;
+    my ($self, $forks, $netFtpOptions) = @_;
     my @children;
-    for my $i (1..5) {
+    for my $i (1..$forks) {
         my $pid = fork();
         if ($pid == 0) { #This is a child process
             DEBUG "Child $$ forked";
