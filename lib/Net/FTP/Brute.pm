@@ -101,7 +101,7 @@ sub _recurseBruteForce {
     } catch {
         croak $_ unless $_ =~ /Cannot get a DATA channel open/;
 
-        DEBUG "PID$$: DATA channel not open. Escalating to brute-force.";
+        DEBUG "PID$$: DATA connection not open. Escalating to brute-force.";
         my @children = $self->_spawnForks( $forks, $netFtpOptions );
         TRACE "PID$$: Children spawned";
 
@@ -170,14 +170,24 @@ Collect exited child processes so they wont be left defunct.
 sub _handleExitedChilds {
     my ($self, $children) = @_;
 
-    my $kid;
-    do {
-        $kid = waitpid(0, WNOHANG);
-        if ($kid > 0) {
-            @$children = grep {$_ != $kid} @$children;
-            TRACE "PID$$: Child ".$kid." exited";
+    for (my $i=0 ; $i<scalar(@$children) ; $i++) {
+        my $pid = $children->[$i];
+        my $kid = waitpid($pid, WNOHANG); #Do we get a signal from the child process $pid?
+        if ($kid == $pid) {
+            TRACE "PID$$: Child $pid exited";
+            splice(@$children, $i--, 1);
         }
-    } while ($kid > 0);
+        elsif ($kid < 0) {
+            TRACE "PID$$: Child $pid no longer exists";
+        }
+        elsif ($kid == 0) {
+            TRACE "PID$$: Child $pid still running";
+        }
+        else {
+            TRACE "PID$$: Child $pid unknown process status '$kid'";
+            splice(@$children, $i--, 1);
+        }
+    }
 
     return;
 }
@@ -206,7 +216,8 @@ sub _testConnection {
 =cut
 
 sub _getNetFtpOptions {
-    return $_[0]->{_netFtpOptions};
+    my ($self) = @_;
+    return $self->{_netFtpOptions};
 }
 
 =head1 AUTHOR
