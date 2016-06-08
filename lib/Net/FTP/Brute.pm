@@ -78,25 +78,25 @@ sub getWorkingConnection {
 
     my $ftp;
     try {
-        TRACE "Trying _testConnection()";
+        TRACE "PID$$: Trying _testConnection()";
         $ftp = $self->_testConnection( $netFtpOptions );
     } catch {
         croak $_ unless $_ =~ /Cannot get a DATA channel open/;
 
-        DEBUG "DATA channel not open. Escalating to brute-force.";
+        DEBUG "PID$$: DATA channel not open. Escalating to brute-force.";
         my $children = $self->_spawnForks( $netFtpOptions );
-        TRACE "Children spawned";
+        TRACE "PID$$: Children spawned";
 
         ##Wait for children to terminate and retry connecting to ftp
         my $i = 0;
         while (@$children) {
             my $ei = $i % scalar(@$children); #Get the effective index in a very long running loop
             unless (kill(0, $children->[$ei])) { #Remove the exited child
-                TRACE "Child ".$children->[$ei]." exited naturally";
+                TRACE "PID$$: Child ".$children->[$ei]." exited naturally";
                 splice(@$children, $ei, 1);
             }
             try {
-                TRACE "Retrying _testConnection()";
+                TRACE "PID$$: Retrying _testConnection()";
                 $ftp = $self->_testConnection( $netFtpOptions );
             } catch {
                 croak $_ unless $_ =~ /Cannot get a DATA channel open/;
@@ -105,12 +105,12 @@ sub getWorkingConnection {
         }
         foreach my $pid (@$children) {
             kill('SIGTERM', $pid); #Terminate children after having made a successful connection
-            TRACE "Kill 'SIGTERM' Child $pid";
+            TRACE "PID$$: Kill 'SIGTERM' Child $pid";
         }
     };
 
-    DEBUG "Returning a working ftp-connection" if $ftp;
-    DEBUG "Returning no ftp-connection" unless $ftp;
+    DEBUG "PID$$: Returning a working ftp-connection" if $ftp;
+    DEBUG "PID$$: Returning no ftp-connection" unless $ftp;
     return $ftp;
 }
 
@@ -132,10 +132,10 @@ sub _spawnForks {
             try {
                 my $ftp = $self->_testConnection( $netFtpOptions );
                 DEBUG "Child $$ succesfully connected";
-                exit(0);
             } catch {
                 TRACE "Child $$ failed to connect: $_";
             };
+            exit(0);
         }
         else {
             push(@children, $pid);
