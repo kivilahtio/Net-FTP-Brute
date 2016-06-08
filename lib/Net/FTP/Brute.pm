@@ -10,6 +10,8 @@ Log::Log4perl->easy_init($ENV{'Net_FTP_Brute_loglevel'} || $ERROR);
 
 use Net::FTP;
 
+local $SIG{CHLD} = 'IGNORE'; #Tell Perl to not wait for special handling of the child process exit status, but release child processes for reaping.
+
 =head1 NAME
 
 Net::FTP::Brute - The great new Net::FTP::Brute!
@@ -108,7 +110,7 @@ sub _recurseBruteForce {
         my $i = 0;
         while (@$children) {
             my $ei = $i % scalar(@$children); #Get the effective index in a very long running loop
-            unless (kill(0, $children->[$ei])) { #Remove the exited child
+            unless (kill(0,$children->[$ei]) || $! == 1) { #Remove the exited child
                 TRACE "PID$$: Child ".$children->[$ei]." exited naturally";
                 splice(@$children, $ei, 1);
             }
