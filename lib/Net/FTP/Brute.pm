@@ -5,7 +5,9 @@ use warnings FATAL => 'all';
 use Carp;
 use Try::Tiny;
 use Scalar::Util qw(blessed);
-
+use Log::Log4perl qw(:easy);
+Log::Log4perl->easy_init($ENV{'Net_FTP_Brute_loglevel'} || $ERROR);
+print "$TRACE $DEBUG $FATAL";
 use Net::FTP;
 
 =head1 NAME
@@ -23,19 +25,17 @@ our $VERSION = 0.01;
 
 =head1 SYNOPSIS
 
-Quick summary of what the module does.
-
-Perhaps a little code snippet.
+Tries to find a way, for an ftp-connection, through an occasionally allowing corporate firewall.
 
     use Net::FTP::Brute;
 
-    my $foo = Net::FTP::Brute->new();
-    ...
+    my $brute = Net::FTP::Brute->new();
+    my $ftp = $brute->getWorkingConnection();
 
-=head1 EXPORT
+=head1 ENVIRONMENT
 
-A list of functions that can be exported.  You can delete this section
-if you don't export anything, such as for a purely object-oriented module.
+Debug log statements with with $ENV{'Net_FTP_Brute_loglevel'} = 5000.
+Defaults to ERROR.
 
 =head1 SUBROUTINES/METHODS
 
@@ -78,19 +78,26 @@ sub getWorkingConnection {
 
     my $ftp;
     try {
+        TRACE "Trying _testConnection()";
         $ftp = $self->_testConnection( $netFtpOptions );
+croak "Cannot get a DATA channel open to '";
     } catch {
         croak $_ unless $_ =~ /Cannot get a DATA channel open/;
 
-        ##DATA channel not open. Escalating to brute-force.
+        DEBUG "DATA channel not open. Escalating to brute-force.";
         my $children = $self->_spawnForks( $netFtpOptions );
+        TRACE "Children spawned";
 
         ##Wait for children to terminate and retry connecting to ftp
         my $i = 0;
         while (@$children) {
             my $ei = $i % scalar(@$children); #Get the effective index in a very long running loop
-            splice(@$children, $ei, 1) unless kill(0, $children->[$ei]); #Remove the exitted child
+            unless (kill(0, $children->[$ei])) { #Remove the exited child
+                TRACE "Child ".$children->[$ei]." exited naturally";
+                splice(@$children, $ei, 1);
+            }
             try {
+                TRACE "Retrying _testConnection()";
                 $ftp = $self->_testConnection( $netFtpOptions );
             } catch {
                 croak $_ unless $_ =~ /Cannot get a DATA channel open/;
@@ -98,7 +105,8 @@ sub getWorkingConnection {
             last if $ftp;
         }
         foreach my $pid (@$children) {
-            kill('SIGDIE', $pid); #Terminate children after having made a successful connection
+            kill('SIGTERM', $pid); #Terminate children after having made a successful connection
+            TRACE "Kill 'SIGTERM' Child $pid";
         }
     };
 
@@ -119,8 +127,14 @@ sub _spawnForks {
     for my $i (1..5) {
         my $pid = fork();
         if ($pid == 0) { #This is a child process
-            $self->_testConnection( $netFtpOptions );
-            exit(0);
+            DEBUG "Child $$ forked";
+            try {
+                my $ftp = $self->_testConnection( $netFtpOptions );
+                DEBUG "Child $$ succesfully connected";
+                exit(0);
+            } catch {
+                TRACE "Child $$ failed to connect: $_";
+            };
         }
         else {
             push(@children, $pid);

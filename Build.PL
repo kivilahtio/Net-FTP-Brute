@@ -18,6 +18,7 @@ my $builder = Module::Build->new(
     requires => {
         'Net::FTP'      => 3.0,
         'Moo'           => 2.0,
+        'Log::Log4perl' => 1.47,
     },
     add_to_cleanup     => [ 'Net-FTP-Brute-*' ],
     create_makefile_pl => 'traditional',
