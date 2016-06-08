@@ -9,8 +9,7 @@ use Log::Log4perl qw(:easy);
 Log::Log4perl->easy_init($ENV{'Net_FTP_Brute_loglevel'} || $ERROR);
 
 use Net::FTP;
-
-local $SIG{CHLD} = 'IGNORE'; #Tell Perl to not wait for special handling of the child process exit status, but release child processes for reaping.
+use POSIX ":sys_wait_h";
 
 =head1 NAME
 
@@ -103,17 +102,12 @@ sub _recurseBruteForce {
         croak $_ unless $_ =~ /Cannot get a DATA channel open/;
 
         DEBUG "PID$$: DATA channel not open. Escalating to brute-force.";
-        my $children = $self->_spawnForks( $forks, $netFtpOptions );
+        my @children = $self->_spawnForks( $forks, $netFtpOptions );
         TRACE "PID$$: Children spawned";
 
         ##Wait for children to terminate and retry connecting to ftp
         my $i = 0;
-        while (@$children) {
-            my $ei = $i % scalar(@$children); #Get the effective index in a very long running loop
-            unless (kill(0,$children->[$ei]) || $! == 1) { #Remove the exited child
-                TRACE "PID$$: Child ".$children->[$ei]." exited naturally";
-                splice(@$children, $ei, 1);
-            }
+        while (@children) {
             try {
                 TRACE "PID$$: Retrying _testConnection()";
                 $ftp = $self->_testConnection( $netFtpOptions );
@@ -122,11 +116,14 @@ sub _recurseBruteForce {
             };
             last if $ftp;
             $i++;
+
+            $self->_handleExitedChilds(\@children);
         }
-        foreach my $pid (@$children) {
+        foreach my $pid (@children) {
             kill('SIGTERM', $pid); #Terminate children after having made a successful connection
             TRACE "PID$$: Kill 'SIGTERM' Child $pid";
         }
+        $self->_handleExitedChilds(\@children);
     };
 
     DEBUG "PID$$: Returning a working ftp-connection" if $ftp;
@@ -138,7 +135,7 @@ sub _recurseBruteForce {
 
 Spawns parallel forks to try to connect to the ftp-server.
 
-@RETURNS ARRAYRef of Integers, child process ids.
+@RETURNS ARRAY of Integers, child process ids.
 
 =cut
 
@@ -161,7 +158,24 @@ sub _spawnForks {
             push(@children, $pid);
         }
     }
-    return \@children;
+    return @children;
+}
+
+=head3 _handleExitedChilds
+
+Collect exited child processes so they wont be left defunct.
+
+=cut
+
+sub _handleExitedChilds {
+    my ($self, $children) = @_;
+
+    while(my $kid = waitpid(0, WNOHANG)) {
+        @$children = grep {$_ != $kid} @$children;
+        TRACE "PID$$: Child ".$kid." exited";
+    }
+
+    return;
 }
 
 =head3 _testConnection
