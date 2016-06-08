@@ -170,10 +170,14 @@ Collect exited child processes so they wont be left defunct.
 sub _handleExitedChilds {
     my ($self, $children) = @_;
 
-    while(my $kid = waitpid(0, WNOHANG)) {
-        @$children = grep {$_ != $kid} @$children;
-        TRACE "PID$$: Child ".$kid." exited";
-    }
+    my $kid;
+    do {
+        $kid = waitpid(0, WNOHANG);
+        if ($kid > 0) {
+            @$children = grep {$_ != $kid} @$children;
+            TRACE "PID$$: Child ".$kid." exited";
+        }
+    } while ($kid > 0);
 
     return;
 }
