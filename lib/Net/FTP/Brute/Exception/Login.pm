@@ -8,7 +8,7 @@ use Exception::Class (
     'Net::FTP::Brute::Exception::Login' => {
         isa => 'Net::FTP::Brute::Exception',
         description => "Logging to the ftp-server failed.",
-        fields => ['Login'], #username of the authenticatee.
+        fields => ['Host', 'Port', 'Login'], #username of the authenticatee.
     },
 );
 

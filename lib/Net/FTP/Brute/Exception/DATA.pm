@@ -8,6 +8,7 @@ use Exception::Class (
     'Net::FTP::Brute::Exception::DATA' => {
         isa => 'Net::FTP::Brute::Exception',
         description => "Making a ftp DATA-connection failed.",
+        fields => ['Host', 'Port'],
     },
 );
 
