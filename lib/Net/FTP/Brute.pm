@@ -11,6 +11,12 @@ Log::Log4perl->easy_init($ENV{'Net_FTP_Brute_loglevel'} || $ERROR);
 use Net::FTP;
 use POSIX ":sys_wait_h";
 
+
+use Net::FTP::Brute::Exception::Login;
+use Net::FTP::Brute::Exception::Connection;
+use Net::FTP::Brute::Exception::DATA;
+
+
 =head1 NAME
 
 Net::FTP::Brute - The great new Net::FTP::Brute!
@@ -68,12 +74,19 @@ sub new {
     my $netFtp = $brute->getWorkingConnection($forks, $retries);
 
 Does it's darnest to get a working connection through a corporate firewall.
+If cannot establish a connection, retries $retries times.
+If cannot establish a DATA-connection, tries to brute-force a working connection $retries times.
+If cannot login using the supplied credentials, throws an exception.
 
 @PARAM1 Integer, how many parallel threads as maximum to fork to "stimulate" the remote ftp-server/firewall.
         Defaults to 1-5
 @PARAM2 Integer, how many times to try brute-forcing before giving up?
         Defaults to 100
 @RETURNS Net::FTP-connection object
+
+@THROWS Net::FTP::Brute::Exception::Connection, if no connection to the ftp-server cannot be made
+@THROWS Net::FTP::Brute::Exception::Login, if user authentication fails
+@THROWS Net::FTP::Brute::Exception::DATA, if a DATA-connection cannot be established
 
 =cut
 
@@ -82,16 +95,18 @@ sub getWorkingConnection {
     $forks = 5 unless $forks;
     $retries = ($retries) ? $retries++ : 101;
     my $netFtpOptions = $self->_getNetFtpOptions();
-    return $self->_recurseBruteForce($forks, $retries, $netFtpOptions);
+    return $self->_recurseConnectionRecovery($forks, $retries, $netFtpOptions);
 }
 
-=head3 _recurseBruteForce
+=head3 _recurseConnectionRecovery
+
+Main recursion loop to try to establish a working connection
 
 =cut
 
-sub _recurseBruteForce {
+sub _recurseConnectionRecovery {
     my ($self, $forks, $retries, $netFtpOptions) = @_;
-    TRACE "PID$$: Recursing _recurseBruteForce($forks, $retries, $netFtpOptions)";
+    TRACE "PID$$: Recursing _recurseConnectionRecovery($forks, $retries, $netFtpOptions)";
     croak "No more brute-force retries" unless $retries; #Kill the recursion
 
     my $ftp;
@@ -99,36 +114,63 @@ sub _recurseBruteForce {
         TRACE "PID$$: Trying _testConnection()";
         $ftp = $self->_testConnection( $netFtpOptions );
     } catch {
-        croak $_ unless $_ =~ /Cannot get a DATA channel open/;
+        croak($_) unless(blessed($_));
 
-        DEBUG "PID$$: DATA connection not open. Escalating to brute-force.";
-        my @children = $self->_spawnForks( $forks, $netFtpOptions );
-        TRACE "PID$$: Children spawned";
-
-        ##Wait for children to terminate and retry connecting to ftp
-        my $i = 0;
-        while (@children) {
-            try {
-                TRACE "PID$$: Retrying _testConnection()";
-                $ftp = $self->_testConnection( $netFtpOptions );
-            } catch {
-                croak $_ unless $_ =~ /Cannot get a DATA channel open/;
-            };
-            last if $ftp;
-            $i++;
-
-            $self->_handleExitedChilds(\@children);
+        ##Data connection failed, start brute-forcing
+        if ($_->isa('Net::FTP::Brute::Exception::DATA')) {
+            $self->_recoverUsingBruteForce($forks, $netFtpOptions);
         }
-        foreach my $pid (@children) {
-            kill('SIGTERM', $pid); #Terminate children after having made a successful connection
-            TRACE "PID$$: Kill 'SIGTERM' Child $pid";
+        ##Connection failed/timed out. Retry without brute forcing until the connection has come back.
+        elsif ($_->isa('Net::FTP::Brute::Exception::Connection')) {
+            DEBUG "PID$$: Connection failed. Retrying peacefully.";
         }
-        $self->_handleExitedChilds(\@children);
+        else {
+            $_->rethrow(); #a fatal Exception, terminate the module.
+        }
     };
 
     DEBUG "PID$$: Returning a working ftp-connection" if $ftp;
     DEBUG "PID$$: Returning no ftp-connection" unless $ftp;
-    return $ftp || $self->_recurseBruteForce($forks, --$retries, $netFtpOptions);
+    return $ftp || $self->_recurseConnectionRecovery($forks, --$retries, $netFtpOptions);
+}
+
+=head3 _recoverUsingBruteForce
+
+On this connection retry-loop, try brute-forcing a DATA-connection
+
+@RETURNS Net::FTP-connection or undef
+
+=cut
+
+sub _recoverUsingBruteForce {
+    my ($self, $forks, $netFtpOptions) = @_;
+    DEBUG "PID$$: DATA connection not open. Escalating to brute-force.";
+    my @children = $self->_spawnForks( $forks, $netFtpOptions );
+    TRACE "PID$$: Children spawned";
+
+    my $ftp;
+    ##Wait for children to terminate and retry connecting to ftp
+    my $i = 0;
+    while (@children) {
+        try {
+            TRACE "PID$$: Retrying _testConnection()";
+            $ftp = $self->_testConnection( $netFtpOptions );
+        } catch {
+            croak($_) unless(blessed($_));
+            $_->rethrow() unless ($_->isa('Net::FTP::Brute::Exception::DATA'));
+        };
+        last if $ftp;
+        $i++;
+
+        $self->_handleExitedChilds(\@children);
+    }
+    foreach my $pid (@children) {
+        kill('SIGTERM', $pid); #Terminate children after having made a successful connection
+        TRACE "PID$$: Kill 'SIGTERM' Child $pid";
+    }
+    $self->_handleExitedChilds(\@children);
+
+    return $ftp;
 }
 
 =head3 _spawnForks
@@ -194,19 +236,35 @@ sub _handleExitedChilds {
 
 =head3 _testConnection
 
+Makes a connection to the ftp-server using Net::FTP and tests the DATA-connection
+using "ls" aka. "dir".
+
+@THROWS Net::FTP::Brute::Exception::Connection
+@THROWS Net::FTP::Brute::Exception::Login
+@THROWS Net::FTP::Brute::Exception::DATA
+
 =cut
 
 sub _testConnection {
     my ($self, $netFtpOptions) = @_;
 
     my $ftp = Net::FTP->new(%$netFtpOptions)
-        or croak "Cannot connect to '".$netFtpOptions->{Host}."': $@";
+        or Net::FTP::Brute::Exception::Connection->throw(Host => $netFtpOptions->{Host},
+                                                         Port => $netFtpOptions->{Port},
+                                                         error => $@);
 
     $ftp->login($netFtpOptions->{Login},$netFtpOptions->{Password})
-        or croak "Cannot login to '".$netFtpOptions->{Host}."': ".$ftp->message;
+        or Net::FTP::Brute::Exception::Login->throw(Host => $netFtpOptions->{Host},
+                                                    Port => $netFtpOptions->{Port},
+                                                    Login => $netFtpOptions->{Login},
+                                                    error => $ftp->message());
 
     my $files = $ftp->ls();
-        croak "Cannot get a DATA channel open to '".$netFtpOptions->{Host}."': ".$ftp->message unless $files;
+        Net::FTP::Brute::Exception::DATA->throw(Host => $netFtpOptions->{Host},
+                                                   Port => $netFtpOptions->{Port},
+                                                   Login => $netFtpOptions->{Login},
+                                                   error => $ftp->message())
+        unless $files;
 
     return $ftp;
 }
