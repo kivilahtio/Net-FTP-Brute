@@ -1,15 +1,11 @@
 Net-FTP-Brute
 
-The README is used to introduce the module and provide instructions on
-how to install the module, any machine dependencies it may have (for
-example C compilers and installed libraries) and any other information
-that should be provided before the module is installed.
+Tries it's best to establish a connection to a ftp-server.
+If cannot connect, retries tirelessly for network to come back up.
+If can connect, but cannot establish a DATA-connection, starts
+brute forcing with parallel ftp-connections to find an open port.
 
-A README file is required for CPAN modules since CPAN extracts the README
-file from a module distribution so that people browsing the archive
-can use it to get an idea of the module's uses. It is usually a good idea
-to provide version information here so that people can decide whether
-fixes for the module are worth downloading.
+You should use ftp in passive mode for brute-forcing to work best.
 
 
 INSTALLATION
