@@ -107,7 +107,7 @@ Main recursion loop to try to establish a working connection
 sub _recurseConnectionRecovery {
     my ($self, $forks, $retries, $netFtpOptions) = @_;
     TRACE "PID$$: Recursing _recurseConnectionRecovery($forks, $retries, $netFtpOptions)";
-    croak "No more brute-force retries" unless $retries; #Kill the recursion
+    $self->_activeException()->rethrow() unless $retries; #Kill the recursion
 
     my $ftp;
     try {
@@ -115,6 +115,7 @@ sub _recurseConnectionRecovery {
         $ftp = $self->_testConnection( $netFtpOptions );
     } catch {
         croak($_) unless(blessed($_));
+        $self->_activeException($_);
 
         ##Data connection failed, start brute-forcing
         if ($_->isa('Net::FTP::Brute::Exception::DATA')) {
@@ -157,7 +158,7 @@ sub _recoverUsingBruteForce {
             $ftp = $self->_testConnection( $netFtpOptions );
         } catch {
             croak($_) unless(blessed($_));
-            $_->rethrow() unless ($_->isa('Net::FTP::Brute::Exception::DATA'));
+            $self->_activeException($_);
         };
         last if $ftp;
         $i++;
@@ -276,6 +277,18 @@ sub _testConnection {
 sub _getNetFtpOptions {
     my ($self) = @_;
     return $self->{_netFtpOptions};
+}
+
+=head3 _activeException
+
+Gets or sets the latest Exception caught.
+
+=cut
+
+sub _activeException {
+    my ($self, $exception) = @_;
+    return $self->{_activeException} unless $exception;
+    return $self->{_activeException} = $exception;
 }
 
 =head1 AUTHOR
