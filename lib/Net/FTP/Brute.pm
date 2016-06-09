@@ -262,9 +262,8 @@ sub _testConnection {
 
     my $files = $ftp->ls();
         Net::FTP::Brute::Exception::DATA->throw(Host => $netFtpOptions->{Host},
-                                                   Port => $netFtpOptions->{Port},
-                                                   Login => $netFtpOptions->{Login},
-                                                   error => $ftp->message())
+                                                Port => $netFtpOptions->{Port},
+                                                error => $ftp->message())
         unless $files;
 
     return $ftp;
